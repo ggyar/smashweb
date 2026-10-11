@@ -1,66 +1,69 @@
 // Server für Render (und lokal): node server.js
+// Liefert die statische App aus public/ und die API aus lib/api.js.
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
-const { isAuthed, cookieHeader, checkCode, configured, view } = require('./lib/auth');
+const zlib = require('zlib');
+const { handle } = require('./lib/api');
 
 const PORT = process.env.PORT || 3000;
-const fails = new Map(); // IP -> { n, until }
-
-const send = (res, status, body, headers = {}) => {
-  res.writeHead(status, { 'Cache-Control': 'no-store', ...headers });
-  res.end(body);
+const PUB = path.join(__dirname, 'public');
+const TYPES = {
+  '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
+  '.jpg': 'image/jpeg', '.png': 'image/png', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.json': 'application/json',
 };
-const html = (res, name) => send(res, 200, view(name), { 'Content-Type': 'text/html; charset=utf-8' });
-const json = (res, status, obj, headers = {}) =>
-  send(res, status, JSON.stringify(obj), { 'Content-Type': 'application/json', ...headers });
+const cache = new Map(); // Datei -> { raw, gz }
 
 function readBody(req) {
   return new Promise((resolve) => {
     let d = '';
-    req.on('data', (c) => {
-      d += c;
-      if (d.length > 2000) req.destroy();
-    });
-    req.on('end', () => {
-      try { resolve(JSON.parse(d || '{}')); } catch { resolve({}); }
-    });
+    req.on('data', (c) => { d += c; if (d.length > 20000) req.destroy(); });
+    req.on('end', () => { try { resolve(JSON.parse(d || '{}')); } catch (_) { resolve({}); } });
+    req.on('error', () => resolve({}));
   });
 }
 
-http
-  .createServer(async (req, res) => {
-    const url = (req.url || '/').split('?')[0];
+function serveFile(req, res, file) {
+  let e = cache.get(file);
+  if (!e) {
+    const raw = fs.readFileSync(file);
+    const ext = path.extname(file);
+    e = { raw, gz: /\.(html|js|css|json|svg)$/.test(ext) ? zlib.gzipSync(raw) : null };
+    cache.set(file, e);
+  }
+  const ext = path.extname(file);
+  const h = { 'Content-Type': TYPES[ext] || 'application/octet-stream', 'Cache-Control': ext === '.jpg' ? 'public, max-age=86400' : 'no-cache' };
+  if (e.gz && /\bgzip\b/.test(req.headers['accept-encoding'] || '')) {
+    h['Content-Encoding'] = 'gzip'; h.Vary = 'Accept-Encoding';
+    res.writeHead(200, h); return res.end(e.gz);
+  }
+  res.writeHead(200, h); res.end(e.raw);
+}
 
-    if (url === '/healthz') return send(res, 200, 'ok');
+http.createServer(async (req, res) => {
+  try {
+    const u = new URL(req.url || '/', 'http://localhost');
+    const p = decodeURIComponent(u.pathname);
 
-    if (url === '/hero.jpg') {
-      return send(res, 200, fs.readFileSync(path.join(__dirname, 'public', 'hero.jpg')), {
-        'Content-Type': 'image/jpeg',
-        'Cache-Control': 'public, max-age=86400',
-      });
-    }
+    if (p === '/healthz') { res.writeHead(200); return res.end('ok'); }
 
-    if (url === '/api/login' && req.method === 'POST') {
-      if (!configured()) return json(res, 500, { ok: false, error: 'ACCESS_CODE ist auf dem Server nicht gesetzt.' });
+    if (p.startsWith('/api/')) {
+      const body = req.method === 'POST' ? await readBody(req) : {};
       const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
-      const f = fails.get(ip) || { n: 0, until: 0 };
-      if (Date.now() < f.until) return json(res, 429, { ok: false, error: 'Zu viele Versuche. Bitte kurz warten.' });
-      const { code } = await readBody(req);
-      if (checkCode(code)) {
-        fails.delete(ip);
-        return json(res, 200, { ok: true }, { 'Set-Cookie': cookieHeader(req) });
-      }
-      f.n++;
-      if (f.n >= 5) { f.until = Date.now() + 30000; f.n = 0; }
-      fails.set(ip, f);
-      return json(res, 401, { ok: false, error: 'Falscher Zugangscode.' });
+      const out = await handle({ method: req.method, path: p, query: Object.fromEntries(u.searchParams), body, headers: req.headers, ip });
+      res.writeHead(out.status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+      return res.end(JSON.stringify(out.json));
     }
 
-    if (url === '/api/logout') return json(res, 200, { ok: true }, { 'Set-Cookie': cookieHeader(req, true) });
+    if (p === '/' || /^\/t\/[A-Za-z0-9]+\/?$/.test(p)) return serveFile(req, res, path.join(PUB, 'index.html'));
 
-    if (url === '/' || url === '/index.html') return html(res, isAuthed(req) ? 'app.html' : 'welcome.html');
+    const file = path.join(PUB, p);
+    if (file.startsWith(PUB + path.sep) && fs.existsSync(file) && fs.statSync(file).isFile()) return serveFile(req, res, file);
 
-    send(res, 404, 'Nicht gefunden', { 'Content-Type': 'text/plain; charset=utf-8' });
-  })
-  .listen(PORT, () => console.log(`Smash Turnier läuft auf Port ${PORT}` + (configured() ? '' : ' – ACHTUNG: ACCESS_CODE fehlt!')));
+    res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end('Nicht gefunden');
+  } catch (e) {
+    console.error(e);
+    res.writeHead(500); res.end('Serverfehler');
+  }
+}).listen(PORT, () => console.log('Smash Turnier läuft auf Port ' + PORT + (process.env.DATABASE_URL ? '' : ' – ACHTUNG: DATABASE_URL fehlt!')));

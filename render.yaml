@@ -3,11 +3,9 @@ services:
     name: smashweb
     runtime: node
     plan: free
-    buildCommand: "echo 'kein Build nötig'"
+    buildCommand: npm install --omit=dev
     startCommand: node server.js
     healthCheckPath: /healthz
     envVars:
-      - key: ACCESS_CODE
-        sync: false # wird beim Anlegen im Render-Dashboard abgefragt
-      - key: SESSION_SECRET
-        generateValue: true
+      - key: DATABASE_URL
+        sync: false # Postgres-Verbindungs-URL (z. B. von neon.tech) – wird beim Anlegen abgefragt

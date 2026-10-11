@@ -1,11 +1,12 @@
 {
   "framework": null,
   "buildCommand": null,
+  "installCommand": "npm install --omit=dev",
   "outputDirectory": "public",
   "functions": {
-    "api/*.js": { "includeFiles": "views/**" }
+    "api/*.js": { "maxDuration": 15, "includeFiles": "public/engine.js" }
   },
   "rewrites": [
-    { "source": "/", "destination": "/api/index" }
+    { "source": "/t/:code", "destination": "/index.html" }
   ]
 }

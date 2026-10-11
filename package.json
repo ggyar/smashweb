@@ -1,13 +1,22 @@
 {
   "name": "smashweb",
   "version": "1.0.0",
-  "description": "Smash Bros Turnier-App mit Zugangscode",
+  "description": "Smash Bros Turnier-App: Host + beliebige Teilnehmer, Beitritt per QR-Code",
   "private": true,
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node test/e2e.js && node test/ui.js"
   },
   "engines": {
     "node": ">=18"
+  },
+  "dependencies": {
+    "pg": "^8.23.1",
+    "qrcode-generator": "^2.0.4"
+  },
+  "devDependencies": {
+    "jsdom": "^29.1.1",
+    "pg-mem": "^3.0.14"
   }
 }
