@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: smashweb
+    runtime: node
+    plan: free
+    buildCommand: "echo 'kein Build nötig'"
+    startCommand: node server.js
+    healthCheckPath: /healthz
+    envVars:
+      - key: ACCESS_CODE
+        sync: false # wird beim Anlegen im Render-Dashboard abgefragt
+      - key: SESSION_SECRET
+        generateValue: true

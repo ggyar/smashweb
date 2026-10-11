@@ -1,0 +1,13 @@
+{
+  "name": "smashweb",
+  "version": "1.0.0",
+  "description": "Smash Bros Turnier-App mit Zugangscode",
+  "private": true,
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
