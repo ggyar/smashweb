@@ -1,4 +1,4 @@
-/* Smash Turnier – Browser-App. Die Rechte prüft immer der Server; hier wird nur angezeigt und abgeschickt. */
+/* Smash Turnier – Browser-App. Die Rechte prüft immer der Server (das Host-Gerät); hier wird nur angezeigt und abgeschickt. */
 const E = window.Engine;
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -83,7 +83,12 @@ const P = (i) => S.players[i];
 const isHost = () => !!V && V.me.role === 'host';
 const myIdx = () => (V && V.me.pid != null ? S.players.findIndex((p) => p.pid === V.me.pid) : -1);
 const onlineSet = () => new Set((V ? V.parts : []).filter((p) => p.online).map((p) => p.pid));
-const joinUrl = () => location.origin + '/t/' + code;
+// Adresse, unter der Freunde dieses Gerät im WLAN erreichen (am Host-Gerät steht im Browser nur "localhost")
+let INFO = null, baseIdx = 0;
+const isLocalHost = () => /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
+const baseUrl = () => (isLocalHost() && INFO && INFO.bases.length ? INFO.bases[Math.min(baseIdx, INFO.bases.length - 1)] : location.origin);
+const joinUrl = () => baseUrl() + '/t/' + code;
+async function loadInfo() { const r = await api('/info', { token: '' }); if (r.ok) { INFO = r; render(); } }
 const tags = (p) => (p.alex ? '<span class="b r">2 Leben</span>' : '') + (p.adv ? '<span class="b p">Profi</span>' : '');
 function avp(p,z,n){
  if(p.bot)return `<span class="av bot" style="width:${z}px;height:${z}px;font-size:${z*.55}px">🤖</span>`;
@@ -102,12 +107,13 @@ const roleName = () => ({ host: '👑 Host', player: '🎮 Teilnehmer', viewer: 
 
 /* ---------- Startseite ---------- */
 function vHome() {
-  const ss = sessions(), ids = Object.keys(ss);
-  return `<div class="card"><h2 style="margin-top:0">🎮 Turnier hosten</h2>
-   <div class="hint" style="margin-top:0">Du wirst Host: Du startest das Turnier und hast alle Rechte. Deine Freunde treten per QR-Code bei.</div>
+  const ss = sessions(), ids = Object.keys(ss), canHost = !!(INFO && INFO.canCreate);
+  return (canHost ? `<div class="card"><h2 style="margin-top:0">🎮 Turnier hosten</h2>
+   <div class="hint" style="margin-top:0">Dieses Gerät ist der Server: Du startest das Turnier und hast alle Rechte. Freunde im selben WLAN treten per QR-Code bei.</div>
    <div class="field"><label>Name des Turniers</label><input id="hname" class="full" maxlength="40" placeholder="z. B. Smash-Abend"></div>
-   <button class="btn full" onclick="createT()">Turnier erstellen</button></div>
-  <div class="card"><h2 style="margin-top:0">🔑 Turnier beitreten</h2>
+   <button class="btn full" onclick="createT()">Turnier erstellen</button></div>`
+    : INFO ? '<div class="card"><h2 style="margin-top:0">👋 Hallo!</h2><div class="hint" style="margin-top:0">Turniere werden am Host-Gerät erstellt. Scanne den QR-Code des Hosts mit der Handy-Kamera oder gib unten den Code ein.</div></div>' : '')
+  + `<div class="card"><h2 style="margin-top:0">🔑 Turnier beitreten</h2>
    <div class="hint" style="margin-top:0">Scanne den QR-Code des Hosts mit der Handy-Kamera – oder gib den Code hier ein.</div>
    <div class="field"><label>Turnier-Code</label><input id="jcode" class="full" maxlength="8" autocapitalize="characters" autocomplete="off" placeholder="ABC123" style="text-transform:uppercase;letter-spacing:.2em;text-align:center;font-weight:800" onkeydown="if(event.key==='Enter')joinByCode()"></div>
    <button class="btn full" onclick="joinByCode()">Weiter</button></div>
@@ -138,7 +144,15 @@ function qrCard() {
   return `<div class="card center"><div class="h" style="font-size:12px;font-weight:800;color:var(--mut);text-transform:uppercase">Zum Beitreten scannen</div>
    <div class="qrbox">${qrSvg(joinUrl())}</div>
    <div class="code">${esc(code)}</div>
+   <div class="hint" style="margin:0 0 6px;word-break:break-all">${esc(joinUrl())}</div>
+   ${netInfo()}
    <div class="row"><button onclick="copy(joinUrl())">🔗 Link kopieren</button>${navigator.share ? '<button onclick="shareT()">📤 Teilen</button>' : ''}</div></div>`;
+}
+function netInfo() {
+  if (!isLocalHost() || !INFO) return '';
+  if (!INFO.bases.length) return '<div class="hint" style="color:#ff9bb0">⚠️ Dieses Gerät ist mit keinem Netzwerk verbunden. Verbinde es mit dem WLAN, damit Freunde beitreten können.</div>';
+  if (INFO.bases.length < 2) return '';
+  return `<div class="field"><label>Netzwerk (falls der QR-Code nicht klappt)</label><select class="full" onchange="baseIdx=+this.value;render()">${INFO.bases.map((b, i) => `<option value="${i}" ${i === baseIdx ? 'selected' : ''}>${esc(b)}</option>`).join('')}</select></div>`;
 }
 const shareT = () => navigator.share({ title: 'Smash Turnier', text: 'Tritt meinem Smash-Turnier bei!', url: joinUrl() }).catch(() => {});
 function joinCard() {
@@ -194,7 +208,7 @@ function hostCard() {
    ${playing ? '<button class="btn sec full" onclick="hostPlay(false)">Ich spiele nicht mit</button>' : `<div class="field"><label>Ich spiele auch mit</label><input id="hpname" class="full" maxlength="24" placeholder="Dein Spielername"></div><button class="btn sec full" onclick="hostPlay(true)">Als Spieler eintragen</button>`}
    <button class="btn full" onclick="doAct({type:'start'})">🎲 Gruppen auslosen & Turnier starten</button>`
     : `<button class="btn sec full" onclick="if(confirm('Turnier zurücksetzen? Die Teilnehmer bleiben, alle Ergebnisse werden gelöscht (mit „Zurück“ holst du sie wieder).'))doAct({type:'reset'})">⟲ Turnier zurücksetzen</button>`}
-   <button class="btn sec full" onclick="copy(location.origin+'/t/'+code+'#host='+token())">🔐 Host-Link kopieren (für zweites Gerät)</button>
+   <button class="btn sec full" onclick="copy(baseUrl()+'/t/'+code+'#host='+token())">🔐 Host-Link kopieren (für zweites Gerät)</button>
    <div class="hint">Mit dem Host-Link kannst du das Turnier auch auf einem anderen Gerät leiten. Gib ihn niemandem weiter.</div>
    <button class="btn danger full" onclick="if(confirm('Turnier endgültig löschen?'))doAct({type:'delete'})">🗑 Turnier löschen</button></div>`;
 }
@@ -334,7 +348,7 @@ function render(connOnly) {
   renderTabs();
   let h;
   if (!code) h = vHome();
-  else if (notFound) h = '<div class="card center"><h2 style="margin-top:0">😕 Turnier nicht gefunden</h2><div class="hint">Prüfe den Code oder frage den Host nach einem neuen QR-Code. Turniere werden nach 30 Tagen ohne Aktivität gelöscht.</div><button class="btn full" onclick="go(\'/\')">Zur Startseite</button></div>';
+  else if (notFound) h = '<div class="card center"><h2 style="margin-top:0">😕 Turnier nicht gefunden</h2><div class="hint">Prüfe den Code oder frage den Host nach einem neuen QR-Code. Läuft das Programm auf dem Host-Gerät noch, und bist du im selben WLAN?</div><button class="btn full" onclick="go(\'/\')">Zur Startseite</button></div>';
   else if (!V) h = '<div class="card center">Lade Turnier …</div>';
   else {
     const n = pendingForMe().length;
@@ -349,4 +363,5 @@ function render(connOnly) {
 }
 
 /* Beim Start: Hash-Login (Host-Link) auswerten und loslegen */
+loadInfo();
 route();

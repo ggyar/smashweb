@@ -1,7 +1,7 @@
 {
   "name": "smashweb",
   "version": "1.0.0",
-  "description": "Smash Bros Turnier-App: Host + beliebige Teilnehmer, Beitritt per QR-Code",
+  "description": "Smash Bros Turnier-App fürs eigene WLAN: Das Host-Gerät erstellt den Raum, Freunde treten per QR-Code bei (keine Datenbank, kein Hosting)",
   "private": true,
   "main": "server.js",
   "scripts": {
@@ -11,12 +11,8 @@
   "engines": {
     "node": ">=18"
   },
-  "dependencies": {
-    "pg": "^8.23.1",
-    "qrcode-generator": "^2.0.4"
-  },
+  "dependencies": {},
   "devDependencies": {
-    "jsdom": "^29.1.1",
-    "pg-mem": "^3.0.14"
+    "jsdom": "^29.1.1"
   }
 }

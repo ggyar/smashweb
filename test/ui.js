@@ -1,5 +1,5 @@
-// UI-Rauchtest: mehrere "Browser" (jsdom) gegen die echte API-Logik (pg-mem). Start: node test/ui.js
-process.env.DATABASE_URL = process.env.DATABASE_URL || 'memory';
+// UI-Rauchtest: mehrere "Browser" (jsdom) gegen die echte API-Logik. Start: node test/ui.js
+process.env.DATA_FILE = '';
 const fs = require('fs'), path = require('path');
 const { JSDOM } = require('jsdom');
 const { handle } = require('../lib/api');
@@ -9,7 +9,7 @@ const html = fs.readFileSync(path.join(PUB, 'index.html'), 'utf8').replace(/<scr
 let fails = 0, n = 0;
 const ok = (c, m) => { if (!c) { fails++; console.log('  ✗ FAIL:', m); } else console.log('  ✓', m); };
 
-function browser(url) {
+function browser(url, local = true) {
   const dom = new JSDOM(html, { url: 'http://localhost' + url, runScripts: 'outside-only', pretendToBeVisual: true });
   const w = dom.window;
   const errors = [];
@@ -19,7 +19,7 @@ function browser(url) {
   const ip = 'b' + (n++);
   w.fetch = async (u, o = {}) => {
     const x = new URL(u, 'http://localhost');
-    const out = await handle({ method: o.method || 'GET', path: x.pathname, query: Object.fromEntries(x.searchParams), body: o.body ? JSON.parse(o.body) : {}, headers: o.headers || {}, ip });
+    const out = await handle({ method: o.method || 'GET', path: x.pathname, query: Object.fromEntries(x.searchParams), body: o.body ? JSON.parse(o.body) : {}, headers: o.headers || {}, ip, local });
     return { ok: out.status < 400, status: out.status, json: async () => out.json };
   };
   w.eval('"use strict"; undefined');
@@ -36,7 +36,7 @@ function browser(url) {
 
 (async () => {
   console.log('Startseite');
-  const A = browser('/');
+  const A = browser('/'); await A.ev('loadInfo()');
   ok(/Turnier hosten/.test(A.app()) && /Turnier beitreten/.test(A.app()), 'Startseite zeigt Hosten + Beitreten');
   A.set('hname', 'UI-Turnier');
   await A.ev('createT()'); await A.poll();
@@ -46,11 +46,14 @@ function browser(url) {
   ok(A.app().includes('Host-Bereich') && /Gruppen auslosen/.test(A.app()), 'Host sieht Host-Bereich mit Start-Button');
   ok(A.hero().includes('Host'), 'Kopfzeile zeigt Rolle Host');
 
+  const G = browser('/', false); await G.ev('loadInfo()');
+  ok(!/Turnier hosten/.test(G.app()) && /Turnier beitreten/.test(G.app()), 'Gast-Gerät: kein "Turnier hosten", nur Beitreten');
+
   console.log('Teilnehmer treten per Link bei');
   const names = ['Bea', 'Chris', 'Dana'];
   const B = [];
   for (const nme of names) {
-    const b = browser('/t/' + code);
+    const b = browser('/t/' + code, false);
     await b.poll();
     ok(/Beitreten/.test(b.app()) && !/Host-Bereich/.test(b.app()), nme + ': sieht Beitritts-Formular, KEINEN Host-Bereich');
     b.set('jname', nme); await b.ev('joinT()'); await b.poll();
@@ -93,7 +96,7 @@ function browser(url) {
   ok(A.ev(`S.gm[${mi}].games.length`) === 1 && A.ev('V.reports.length') === 0, 'Nach Bestätigung ist die Runde eingetragen');
 
   console.log('Anzeige für Zuschauer');
-  const Z = browser('/t/' + code); await Z.poll(); await Z.ev("tab='lobby';render()");
+  const Z = browser('/t/' + code, false); await Z.poll(); await Z.ev("tab='lobby';render()");
   ok(/schaust zu/.test(Z.app()) && Z.hero().includes('Zuschauer'), 'Zuschauer sieht Hinweis und Rolle');
   await Z.ev("tab='groups';render()");
   ok(!Z.app().includes('Melden') && !Z.app().includes('+ Runde'), 'Zuschauer hat keine Eingabefelder');

@@ -1,19 +1,34 @@
 # Smash Turnier
 
-Online-Turnier-App für Super Smash Bros. Ultimate: **ein Host, beliebig viele Teilnehmer** (bis 24 – so viele passen in den festen Turnierbaum). Beitritt per **QR-Code**, alle sehen den Stand **live**.
+Turnier-App für Super Smash Bros. Ultimate **für den Freundeskreis – ohne Internet-Hosting und ohne Datenbank**.
+Dein Gerät (Laptop/PC) ist der Server. Freunde im **selben WLAN** treten per **QR-Code** bei, und alle sehen den Stand **live**.
 
-## So funktioniert's
+## Starten (Host-Gerät)
 
-1. **Host:** Startseite → „Turnier erstellen“. In der Lobby erscheint ein **QR-Code** (und ein Link/Code zum Teilen).
-2. **Teilnehmer:** QR-Code mit der Handy-Kamera scannen (oder Code auf der Startseite eingeben), Namen eintragen → „Beitreten“. Danach lässt sich das eigene Profil bearbeiten: Name, Erfahrung (Normal/Fortgeschritten) und Charakterliste (bester zuerst; der erste ist das Icon).
-3. **Host** stellt bei Bedarf Bots ein, vergibt die Alex-Regel (2 Leben) und startet das Turnier: Gruppen werden ausgelost, danach läuft der feste Turnierbaum (Winners / Losers / Amateur / Großes Finale).
-4. **Ergebnisse:** Ein Teilnehmer meldet nach jeder Runde die Kills. Der **Gegner bestätigt** (oder lehnt ab) – erst dann zählt die Runde. Gegen Bots und bei Korrekturen trägt der Host ein.
+1. Einmalig [Node.js](https://nodejs.org) installieren (Version 18 oder neuer). Weitere Pakete sind nicht nötig.
+2. Projekt starten:
+   - **Windows:** Doppelklick auf `start.bat`
+   - **Mac:** Doppelklick auf `start.command`
+   - oder in jedem Terminal: `node server.js`
+3. Der Browser öffnet sich auf `http://localhost:3000`. Dort **„Turnier erstellen“**. In der Lobby erscheint der **QR-Code**.
+4. Freunde scannen ihn mit der Handy-Kamera (gleiches WLAN!), tragen ihren Namen ein – fertig.
 
-### Wer darf was? (wird auf dem Server geprüft)
+Das Host-Gerät muss während des Turniers laufen und im WLAN bleiben. Beenden mit `Strg+C`.
+
+> **Wichtig:** Öffne das Turnier am Host-Gerät immer über `http://localhost:3000` (nicht über die WLAN-Adresse). Nur dort lassen sich Turniere erstellen, und dort liegt dein Host-Schlüssel.
+
+## So läuft ein Turnier
+
+1. **Host:** erstellt das Turnier, stellt bei Bedarf Bots ein, vergibt die Alex-Regel (2 Leben) und startet. Gruppen werden ausgelost, danach läuft der feste Turnierbaum (Winners / Losers / Amateur / Großes Finale).
+2. **Teilnehmer:** pflegen ihr Profil (Name, Erfahrung, Charakterliste – der erste Charakter ist das Icon).
+3. **Ergebnisse:** Ein Teilnehmer meldet nach jeder Runde die Kills, der **Gegner bestätigt** (oder lehnt ab) – erst dann zählt die Runde. Gegen Bots und bei Korrekturen trägt der Host ein.
+
+### Wer darf was? (wird vom Host-Gerät geprüft)
 
 | Aktion | Host | Teilnehmer | Zuschauer |
 |---|:-:|:-:|:-:|
-| Turnier starten / zurücksetzen / löschen | ✔ | – | – |
+| Turnier erstellen (nur am Host-Gerät) | ✔ | – | – |
+| Starten / zurücksetzen / löschen | ✔ | – | – |
 | Bots, Alex-Regel, Teilnehmer entfernen | ✔ | – | – |
 | Gruppen-Gleichstand entscheiden | ✔ | – | – |
 | Ergebnisse direkt eintragen, Runde löschen, „Zurück“ (Undo) | ✔ | – | – |
@@ -22,71 +37,49 @@ Online-Turnier-App für Super Smash Bros. Ultimate: **ein Host, beliebig viele T
 | Ergebnis des Gegners **bestätigen/ablehnen** | ✔ (immer) | ✔ (nur eigener Gegner) | – |
 | Alles ansehen | ✔ | ✔ | ✔ |
 
-Wer nach dem Start über den Link kommt, ist Zuschauer. Teilnehmer erkennt der Server an einem persönlichen Schlüssel, der nur im Browser liegt (in der Datenbank steht nur ein Hash).
+Wer nach dem Start über den QR-Code kommt, ist Zuschauer. Teilnehmer erkennt das Host-Gerät an einem persönlichen Schlüssel, der nur in deren Browser liegt. Der Host kann selbst mitspielen und das Turnier per **Host-Link** (Host-Bereich) auf einem zweiten Gerät leiten.
 
-Der Host kann selbst mitspielen („Ich spiele auch mit“) und das Turnier mit dem **Host-Link** (Host-Bereich) auf einem zweiten Gerät leiten.
+**Online-Status:** Jeder offene Browser meldet sich alle 3 Sekunden; wer in den letzten 20 Sekunden aktiv war, hat einen grünen Punkt.
 
-## Datenbank
+## Nicht öffentlich
 
-PostgreSQL. Die Tabellen werden beim ersten Start automatisch angelegt (Schema: [`db/schema.sql`](db/schema.sql)):
+Es gibt kein Hosting im Internet. Die App ist nur für Geräte im selben WLAN erreichbar und der Beitritt läuft über den zufälligen Raum-Code (im QR-Code). Es werden keine Daten an Dritte geschickt.
 
-- `tournaments` – Turnier, Phase, Turnierbaum-Zustand (JSONB), Versionsnummer, Host-Online-Status
-- `participants` – Teilnehmer mit Profil, Charakteren und `last_seen` (= **Online-Status**)
-- `reports` – gemeldete Runden, die der Gegner noch bestätigen muss
-- `history` – Verlauf für „Zurück“ (Undo)
+## Speicherung
 
-**Online-Status:** Jeder offene Browser fragt alle 3 s den Stand ab („Heartbeat“); wer in den letzten 20 s aktiv war, hat einen grünen Punkt. Änderungen erscheinen bei allen innerhalb weniger Sekunden. Turniere ohne Aktivität werden nach 30 Tagen gelöscht.
+Alles liegt im Arbeitsspeicher des Host-Geräts und wird zusätzlich in `data/rooms.json` gesichert. Wenn das Programm abstürzt oder neu gestartet wird, sind Turnier, Teilnehmer und Ergebnisse wieder da. Zum Löschen: Turnier im Host-Bereich löschen oder die Datei entfernen. Turniere ohne Aktivität werden nach 14 Tagen aufgeräumt.
 
-### Kostenlose Datenbank (empfohlen: Neon)
+## Wenn Freunde nicht beitreten können
 
-1. Auf [neon.tech](https://neon.tech) anmelden → neues Projekt.
-2. **Connection string** kopieren (`postgresql://…?sslmode=require`). Das ist deine `DATABASE_URL`.
+- **Gleiches WLAN?** Alle Geräte müssen im selben Netzwerk sein.
+- **Windows-Firewall:** Beim ersten Start fragt Windows, ob Node.js im Netzwerk kommunizieren darf. **Zulassen** (für „Privat“).
+- **Gäste-WLAN / Router mit „Client-Isolation“:** Dort sehen sich Geräte nicht. Lösung: Hotspot am Handy anschalten; Laptop und Freunde verbinden sich damit.
+- **Mehrere Netzwerke am Host-Gerät** (z. B. VPN, Ethernet + WLAN): In der Lobby lässt sich unter „Netzwerk“ die richtige Adresse für den QR-Code wählen.
+- Anderer Port: `PORT=3001 node server.js` (Windows: `set PORT=3001 && node server.js`).
 
-(Jeder andere Postgres geht auch, z. B. Supabase oder Render Postgres. Beachte: Render-Postgres im Free-Tarif läuft nach 30 Tagen ab.)
-
-## Deploy auf Render
-
-1. [render.com](https://render.com) → **New → Blueprint** → Repo `smashweb` wählen.
-2. `DATABASE_URL` eintragen → **Apply**.
-
-Im Free-Tarif schläft der Dienst nach Inaktivität ein; der erste Aufruf dauert dann ~1 Minute. Öffne die Seite vor dem Turnier einmal kurz.
-
-## Deploy auf Vercel
-
-1. [vercel.com](https://vercel.com) → **Add New → Project** → Repo importieren, Framework **Other**.
-2. Unter **Environment Variables** `DATABASE_URL` eintragen → **Deploy**.
-
-## Lokal starten
-
-```bash
-npm install
-DATABASE_URL=postgresql://… node server.js   # → http://localhost:3000
-```
-
-Zum Ausprobieren ohne eigene Datenbank gibt es einen In-Memory-Modus (`DATABASE_URL=memory`, Daten weg beim Neustart, nur für Entwicklung).
+Ausnahmen für Fortgeschrittene (Umgebungsvariablen): `PUBLIC_URL` (feste Adresse im QR-Code), `ALLOW_REMOTE_CREATE=1` (Turniere auch von anderen Geräten erstellen), `DATA_FILE` (anderer Speicherort, leer = nicht speichern).
 
 ## Tests
 
 ```bash
-npm test                                      # In-Memory-Datenbank
-DATABASE_URL=postgresql://… npm test          # gegen echtes Postgres (inkl. Test gleichzeitiger Zugriffe)
+npm install     # nur für die Tests (jsdom)
+npm test
 ```
 
-`test/e2e.js` prüft die API (Rechte, Bestätigungsfluss, Online-Status, komplettes Turnier mit gemischten Eingaben), `test/ui.js` simuliert mehrere Browser (Host, Teilnehmer, Zuschauer).
+`test/e2e.js` prüft die API (Rechte, Bestätigungsfluss, Online-Status, Speichern/Neustart, komplettes Turnier), `test/ui.js` simuliert mehrere Browser (Host, Teilnehmer, Zuschauer).
 
 ## Aufbau
 
 | Pfad | Zweck |
 |---|---|
-| `public/` | App im Browser: `index.html`, `app.js`, `style.css`, `qr.js` (QR-Generator), `icons.js`, `engine.js` |
-| `public/engine.js` | Turnierregeln (Gruppen, fester Baum, Kill-Logik) – läuft im Server **und** im Browser |
-| `lib/api.js` | API mit allen Rechteprüfungen |
-| `lib/db.js`, `lib/schema.js` | Datenbankzugriff / Schema |
-| `server.js` | Server für Render und lokal |
-| `api/[...slug].js` | Serverless-Funktion für Vercel |
+| `server.js` | Server auf dem Host-Gerät |
+| `lib/api.js` | Regeln und Rechteprüfung |
+| `lib/store.js` | Speicher (RAM + `data/rooms.json`) |
+| `public/` | Oberfläche: `index.html`, `app.js`, `style.css`, `qr.js` (QR-Generator), `icons.js` |
+| `public/engine.js` | Turnierregeln (Gruppen, fester Baum, Kill-Logik) – läuft im Server und im Browser |
 
 ## Gut zu wissen
 
 - Maximal 24 Spieler (Teilnehmer + Bots), weil der Turnierbaum fest für 24 ausgelegt ist. Weitere Personen können zuschauen.
-- Wer seinen Browser-Speicher löscht, verliert seine Teilnehmer-Identität. Dann kann der Host ihn in der Lobby entfernen, und er tritt neu bei (nach dem Start nicht mehr möglich). Der Host sichert sich mit dem Host-Link ab.
-- Der Beitrittscode ist 6-stellig und zufällig. Wer ihn (oder den QR-Code) kennt, kann beitreten, solange das Turnier in der Lobby ist.
+- Die Verbindung im WLAN ist unverschlüsselt (http). Für ein Freunde-Turnier ist das in Ordnung. „Link kopieren“ funktioniert deshalb am Handy manchmal nur über ein Eingabefenster zum Markieren.
+- Wer seinen Browser-Speicher löscht, verliert seine Teilnehmer-Identität. Der Host kann ihn in der Lobby entfernen, danach tritt er neu bei (nach dem Start nicht mehr).

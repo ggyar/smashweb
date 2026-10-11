@@ -1,17 +1,15 @@
-// Ende-zu-Ende-Test gegen die API (pg-mem). Start: DATABASE_URL=memory node test/e2e.js
-process.env.DATABASE_URL = process.env.DATABASE_URL || 'memory';
+// Ende-zu-Ende-Test gegen die API (Speicher ohne Datenbank). Start: node test/e2e.js
+process.env.DATA_FILE = '';
 const { handle } = require('../lib/api');
 const E = require('../public/engine.js');
 let fails = 0;
 const ok = (c, m) => { if (!c) { fails++; console.log('  ✗ FAIL:', m); } else console.log('  ✓', m); };
 let ipn = 0;
-const call = (method, path, body, token, query) => handle({ method, path, body, query, headers: token ? { authorization: 'Bearer ' + token } : {}, ip: 'ip' + (ipn++ % 50) });
+const call = (method, path, body, token, query) => handle({ method, path, body, query, headers: token ? { authorization: 'Bearer ' + token } : {}, ip: 'ip' + (ipn++ % 50), local: true });
 const act = (code, tk, body) => call('POST', `/api/t/${code}/act`, body, tk);
 const state = (code, tk, q) => call('GET', `/api/t/${code}/state`, null, tk, q);
 
 (async () => {
-  console.log('Schema');
-  ok(require('../lib/schema') === require('fs').readFileSync(require('path').join(__dirname, '..', 'db', 'schema.sql'), 'utf8'), 'lib/schema.js entspricht db/schema.sql');
   console.log('Anlegen & Beitreten');
   let r = await call('POST', '/api/t', { name: 'Testturnier' });
   ok(r.status === 200 && r.json.code && r.json.token, 'Turnier angelegt, Code ' + r.json.code);
@@ -151,6 +149,29 @@ const state = (code, tk, q) => call('GET', `/api/t/${code}/state`, null, tk, q);
   ok((await act(code, host, { type: 'delete' })).json.deleted === true, 'Host löscht Turnier');
   ok((await state(code, host)).status === 404, 'danach 404');
 
+  console.log('Raum nur am Host-Gerät erstellbar');
+  const remote = await handle({ method: 'POST', path: '/api/t', body: { name: 'Fremd' }, headers: {}, ip: 'x', local: false });
+  ok(remote.status === 403, 'Von einem anderen Gerät (nicht Host-Gerät) lässt sich KEIN Turnier erstellen');
+  const inf = (await handle({ method: 'GET', path: '/api/info', headers: {}, ip: 'x', local: false })).json;
+  ok(inf.canCreate === false && Array.isArray(inf.bases), '/api/info: Gast darf nicht erstellen, liefert LAN-Adressen');
+  ok((await handle({ method: 'GET', path: '/api/info', headers: {}, ip: 'x', local: true })).json.canCreate === true, '/api/info: Host-Gerät darf erstellen');
+  const cj = (await call('POST', '/api/t', { name: 'Gast-Beitritt' })).json;
+  const gj = await handle({ method: 'POST', path: `/api/t/${cj.code}/join`, body: { name: 'Gast' }, headers: {}, ip: 'g1', local: false });
+  ok(gj.status === 200, 'Ein Gast (anderes Gerät) kann trotzdem beitreten');
+
+  console.log('Speichern auf Platte (Neustart)');
+  const fs = require('fs'), os = require('os'), pth = require('path'), store = require('../lib/store');
+  const tmp = pth.join(os.tmpdir(), 'smash-test-' + Date.now() + '.json');
+  process.env.DATA_FILE = tmp;
+  const cp = (await call('POST', '/api/t', { name: 'Neustart' })).json;
+  const jp = (await call('POST', `/api/t/${cp.code}/join`, { name: 'Bleibt' })).json;
+  store.flush();
+  ok(fs.existsSync(tmp), 'Datei geschrieben');
+  const loaded = store.load();
+  ok(loaded >= 1 && (await state(cp.code, jp.token)).json.me.role === 'player', 'Nach "Neustart" sind Turnier und Teilnehmer-Schlüssel noch da');
+  ok((await state(cp.code, cp.token)).json.me.role === 'host', 'Host-Schlüssel gilt weiter');
+  fs.unlinkSync(tmp); process.env.DATA_FILE = '';
+
   console.log('Verschiedene Teilnehmerzahlen starten (3, 5, 24)');
   for (const N of [3, 5, 24]) {
     const c2 = (await call('POST', '/api/t', { name: 'T' + N })).json;
@@ -166,9 +187,8 @@ const state = (code, tk, q) => call('GET', `/api/t/${code}/state`, null, tk, q);
   let last; for (let i = 0; i < 25; i++) last = await call('POST', `/api/t/${c4.code}/join`, { name: 'V' + i });
   ok(last.status === 403, 'Spieler Nr. 25 wird abgelehnt (fester Baum für 24)');
 
-  if (process.env.DATABASE_URL === 'memory') console.log('Gleichzeitige Zugriffe: übersprungen (pg-mem kennt keine Zeilensperren – gegen echtes Postgres testen: DATABASE_URL=postgresql://… npm test)');
-  else {
-  console.log('Gleichzeitige Zugriffe (Sperren)');
+  {
+  console.log('Gleichzeitige Zugriffe');
     const c5 = (await call('POST', '/api/t', { name: 'parallel' })).json;
     const res = await Promise.all(Array.from({ length: 30 }, (_, i) => call('POST', `/api/t/${c5.code}/join`, { name: 'Par' + i })));
     const okN = res.filter((x) => x.status === 200).length;

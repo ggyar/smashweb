@@ -1,12 +1,14 @@
-// Server für Render (und lokal): node server.js
-// Liefert die statische App aus public/ und die API aus lib/api.js.
+// Smash Turnier – läuft auf dem Host-Gerät (Laptop/PC) im eigenen WLAN. Start: node server.js
+// Keine Datenbank, keine externen Pakete: Räume liegen im Speicher und in data/rooms.json.
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
-const { handle } = require('./lib/api');
+const { spawn } = require('child_process');
+const store = require('./lib/store');
+const { handle, isLocalAddress, lanBases } = require('./lib/api');
 
-const PORT = process.env.PORT || 3000;
+const PORT = Number(process.env.PORT) || 3000;
 const PUB = path.join(__dirname, 'public');
 const TYPES = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
@@ -27,8 +29,7 @@ function serveFile(req, res, file) {
   let e = cache.get(file);
   if (!e) {
     const raw = fs.readFileSync(file);
-    const ext = path.extname(file);
-    e = { raw, gz: /\.(html|js|css|json|svg)$/.test(ext) ? zlib.gzipSync(raw) : null };
+    e = { raw, gz: /\.(html|js|css|json|svg)$/.test(file) ? zlib.gzipSync(raw) : null };
     cache.set(file, e);
   }
   const ext = path.extname(file);
@@ -40,17 +41,17 @@ function serveFile(req, res, file) {
   res.writeHead(200, h); res.end(e.raw);
 }
 
-http.createServer(async (req, res) => {
+const server = http.createServer(async (req, res) => {
   try {
     const u = new URL(req.url || '/', 'http://localhost');
     const p = decodeURIComponent(u.pathname);
 
-    if (p === '/healthz') { res.writeHead(200); return res.end('ok'); }
-
     if (p.startsWith('/api/')) {
       const body = req.method === 'POST' ? await readBody(req) : {};
-      const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
-      const out = await handle({ method: req.method, path: p, query: Object.fromEntries(u.searchParams), body, headers: req.headers, ip });
+      const out = await handle({
+        method: req.method, path: p, query: Object.fromEntries(u.searchParams), body, headers: req.headers,
+        ip: req.socket.remoteAddress || '', local: isLocalAddress(req.socket.remoteAddress),
+      });
       res.writeHead(out.status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
       return res.end(JSON.stringify(out.json));
     }
@@ -66,4 +67,29 @@ http.createServer(async (req, res) => {
     console.error(e);
     res.writeHead(500); res.end('Serverfehler');
   }
-}).listen(PORT, () => console.log('Smash Turnier läuft auf Port ' + PORT + (process.env.DATABASE_URL ? '' : ' – ACHTUNG: DATABASE_URL fehlt!')));
+});
+
+function openBrowser(url) {
+  try {
+    const [cmd, args] = process.platform === 'win32' ? ['cmd', ['/c', 'start', '', url]] : process.platform === 'darwin' ? ['open', [url]] : ['xdg-open', [url]];
+    const c = spawn(cmd, args, { stdio: 'ignore', detached: true });
+    c.on('error', () => {}); c.unref();
+  } catch (_) { /* Browser einfach selbst öffnen */ }
+}
+
+server.on('error', (e) => {
+  if (e.code === 'EADDRINUSE') console.error(`\nPort ${PORT} ist schon belegt (läuft das Turnier-Programm vielleicht schon?).\nAnderen Port nehmen:  PORT=3001 node server.js\n`);
+  else console.error(e);
+  process.exit(1);
+});
+
+server.listen(PORT, '0.0.0.0', () => {
+  const n = store.load();
+  const bases = lanBases();
+  console.log('\n  🎮  SMASH TURNIER läuft!' + (n ? `  (${n} gespeicherte${n === 1 ? 's' : ''} Turnier${n === 1 ? '' : 'e'} geladen)` : ''));
+  console.log('\n  Am HOST-GERÄT (hier) öffnen:   http://localhost:' + PORT);
+  if (bases.length) console.log('  Freunde im selben WLAN:         ' + bases.join('   ') + '   (per QR-Code in der Lobby)');
+  else console.log('  ⚠️  Kein Netzwerk gefunden – verbinde dieses Gerät mit dem WLAN, damit Freunde beitreten können.');
+  console.log('\n  Beenden mit Strg+C.\n');
+  if (process.env.NO_OPEN !== '1' && !process.argv.includes('--no-open')) openBrowser('http://localhost:' + PORT);
+});
