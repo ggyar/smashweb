@@ -6,13 +6,16 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node test/e2e.js && node test/ui.js"
+    "test": "node test/e2e.js && node test/ui.js && node test/socket.js"
   },
   "engines": {
     "node": ">=18"
   },
-  "dependencies": {},
+  "dependencies": {
+    "socket.io": "^4.8.4"
+  },
   "devDependencies": {
-    "jsdom": "^29.1.1"
+    "jsdom": "^29.1.1",
+    "socket.io-client": "^4.8.4"
   }
 }

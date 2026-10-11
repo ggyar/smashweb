@@ -159,6 +159,16 @@ const state = (code, tk, q) => call('GET', `/api/t/${code}/state`, null, tk, q);
   const gj = await handle({ method: 'POST', path: `/api/t/${cj.code}/join`, body: { name: 'Gast' }, headers: {}, ip: 'g1', local: false });
   ok(gj.status === 200, 'Ein Gast (anderes Gerät) kann trotzdem beitreten');
 
+  console.log('Host-Passwort (Betrieb auf Render)');
+  process.env.ALLOW_REMOTE_CREATE = '1'; process.env.HOST_PASSWORD = 'geheim';
+  const rem = (b) => handle({ method: 'POST', path: '/api/t', body: b, headers: {}, ip: 'pw' + Math.random(), local: false });
+  ok((await rem({ name: 'X' })).status === 403, 'Ohne Passwort kein Turnier (Fremder)');
+  ok((await rem({ name: 'X', password: 'falsch' })).status === 403, 'Falsches Passwort abgelehnt');
+  ok((await rem({ name: 'X', password: 'geheim' })).status === 200, 'Richtiges Passwort: Turnier wird erstellt');
+  ok((await handle({ method: 'GET', path: '/api/info', headers: {}, ip: 'x', local: false })).json.needsPassword === true, '/api/info meldet "Passwort nötig"');
+  delete process.env.ALLOW_REMOTE_CREATE; delete process.env.HOST_PASSWORD;
+  ok((await rem({ name: 'X' })).status === 403, 'Ohne ALLOW_REMOTE_CREATE bleibt Erstellen gesperrt');
+
   console.log('Speichern auf Platte (Neustart)');
   const fs = require('fs'), os = require('os'), pth = require('path'), store = require('../lib/store');
   const tmp = pth.join(os.tmpdir(), 'smash-test-' + Date.now() + '.json');

@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: smashweb
+    runtime: node
+    plan: free
+    buildCommand: npm install --omit=dev
+    startCommand: node server.js
+    healthCheckPath: /api/health
+    envVars:
+      - key: ALLOW_REMOTE_CREATE
+        value: "1"
+      - key: HOST_PASSWORD
+        sync: false
+      - key: NO_OPEN
+        value: "1"

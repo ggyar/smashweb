@@ -13,10 +13,36 @@ const sessions = () => { try { return JSON.parse(localStorage.getItem(SK)) || {}
 function setSess(c, o) { try { const s = sessions(); if (o) s[c] = o; else delete s[c]; localStorage.setItem(SK, JSON.stringify(s)); } catch (e) { /* ignorieren */ } }
 const token = () => (sessions()[code] || {}).token || '';
 
-/* ---------- Server-Aufrufe ---------- */
+/* ---------- Server-Verbindung ---------- */
+// Bevorzugt: Live-Verbindung per socket.io (Push statt Abfragen, sofortiger Online-Status). Fallback: normales HTTP.
+let socket = null, live = false, ONLINE = 0;
+function initSocket() {
+  if (typeof io === 'undefined') return;
+  socket = io({ transports: ['websocket', 'polling'] });
+  socket.on('connect', () => { live = true; conn = true; watchRoom(); if (code) poll(true); else render(true); });
+  socket.on('disconnect', () => { live = false; render(true); });
+  socket.on('changed', () => { if (code) poll(true); });
+  socket.on('online', (n) => { ONLINE = n; render(true); });
+}
+// meldet dem Server, in welchem Raum und mit welchem Schlüssel wir gerade sitzen
+function watchRoom() { if (socket && live && code) socket.emit('watch', { code, token: token() }); }
+function viaSocket(path, opt, tk) {
+  return new Promise((resolve) => {
+    const [pp, qs] = ('/api' + path).split('?');
+    const t = setTimeout(() => resolve({ ok: false, status: 0, error: 'Keine Verbindung zum Server.' }), 10000);
+    socket.emit('api', { method: opt.body ? 'POST' : 'GET', path: pp, query: Object.fromEntries(new URLSearchParams(qs || '')), body: opt.body, token: tk }, (out) => {
+      clearTimeout(t);
+      const j = (out && out.json) || { ok: false, error: 'Serverfehler' };
+      j.status = out ? out.status : 0;
+      if (j.status >= 400 && !j.error) j.error = 'Fehler ' + j.status;
+      resolve(j);
+    });
+  });
+}
 async function api(path, opt = {}) {
-  const h = { 'Content-Type': 'application/json' };
   const tk = opt.token !== undefined ? opt.token : token();
+  if (socket && live) return viaSocket(path, opt, tk);
+  const h = { 'Content-Type': 'application/json' };
   if (tk) h.Authorization = 'Bearer ' + tk;
   try {
     const r = await fetch('/api' + path, { method: opt.body ? 'POST' : 'GET', headers: h, body: opt.body ? JSON.stringify(opt.body) : undefined });
@@ -52,8 +78,8 @@ function route() {
   if (code) {
     const hm = location.hash.match(/host=([0-9a-f]{20,})/);
     if (hm) { setSess(code, { token: hm[1], role: 'host' }); history.replaceState({}, '', '/t/' + code); }
-    render(); poll(true);
-  } else render();
+    render(); watchRoom(); poll(true);
+  } else { render(); }
 }
 async function poll(force) {
   if (!code) return;
@@ -72,7 +98,7 @@ async function poll(force) {
     V = r; S = r.S;
     typing() ? (dirty = true) : render();
   } else if (!r.ok) render(true);
-  timer = setTimeout(() => poll(false), document.hidden ? 8000 : 3000);
+  timer = setTimeout(() => poll(false), live ? 20000 : document.hidden ? 8000 : 3000); // mit Live-Verbindung nur zur Sicherheit
 }
 const typing = () => { const a = document.activeElement; return !!a && /^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName) && $('app').contains(a); };
 document.addEventListener('focusout', () => setTimeout(() => { if (dirty && !typing()) { dirty = false; render(); } }, 150));
@@ -109,8 +135,9 @@ const roleName = () => ({ host: '👑 Host', player: '🎮 Teilnehmer', viewer: 
 function vHome() {
   const ss = sessions(), ids = Object.keys(ss), canHost = !!(INFO && INFO.canCreate);
   return (canHost ? `<div class="card"><h2 style="margin-top:0">🎮 Turnier hosten</h2>
-   <div class="hint" style="margin-top:0">Dieses Gerät ist der Server: Du startest das Turnier und hast alle Rechte. Freunde im selben WLAN treten per QR-Code bei.</div>
+   <div class="hint" style="margin-top:0">Du startest das Turnier und hast alle Rechte. Freunde treten per QR-Code bei.</div>
    <div class="field"><label>Name des Turniers</label><input id="hname" class="full" maxlength="40" placeholder="z. B. Smash-Abend"></div>
+   ${INFO.needsPassword ? '<div class="field"><label>Host-Passwort</label><input id="hpw" class="full" type="password" autocomplete="off" placeholder="Passwort des Servers"></div>' : ''}
    <button class="btn full" onclick="createT()">Turnier erstellen</button></div>`
     : INFO ? '<div class="card"><h2 style="margin-top:0">👋 Hallo!</h2><div class="hint" style="margin-top:0">Turniere werden am Host-Gerät erstellt. Scanne den QR-Code des Hosts mit der Handy-Kamera oder gib unten den Code ein.</div></div>' : '')
   + `<div class="card"><h2 style="margin-top:0">🔑 Turnier beitreten</h2>
@@ -121,7 +148,8 @@ function vHome() {
 }
 async function createT() {
   const name = $('hname').value.trim();
-  const r = await api('/t', { body: { name }, token: '' });
+  const pw = $('hpw') ? $('hpw').value : '';
+  const r = await api('/t', { body: { name, password: pw }, token: '' });
   if (!r.ok) return toast(r.error, true);
   setSess(r.code, { token: r.token, role: 'host', tname: name || 'Smash Turnier' });
   go('/t/' + r.code);
@@ -168,7 +196,7 @@ async function joinT() {
   if (!r.ok) return toast(r.error, true);
   setSess(code, { token: r.token, role: 'player', pid: r.pid, tname: V ? V.t.name : code });
   toast('Willkommen, ' + name + '! 🎉');
-  poll(true);
+  watchRoom(); poll(true);
 }
 function partsCard() {
   const host = isHost(), lobby = S.phase === 'lobby';
@@ -332,9 +360,9 @@ function vRank() {
 
 /* ---------- Rahmen ---------- */
 function renderHero() {
-  if (!code || !V) { $('hero').innerHTML = `<div class="hero ${code ? '' : 'big'}"><div class="tools">${code ? '<button onclick="go(\'/\')">🏠 Start</button>' : ''}</div><h1>SMASH <b>TURNIER</b></h1><small>Super Smash Bros. Ultimate</small></div>`; return; }
+  if (!code || !V) { $('hero').innerHTML = `<div class="hero ${code ? '' : 'big'}"><div class="tools">${code ? '<button onclick="go(\'/\')">🏠 Start</button>' : ''}</div><h1>SMASH <b>TURNIER</b></h1><small>Super Smash Bros. Ultimate${live && ONLINE ? ' · <span class="conn" style="color:var(--ok)">● ' + ONLINE + ' online</span>' : ''}</small></div>`; return; }
   $('hero').innerHTML = `<div class="hero"><div class="tools"><button onclick="go('/')">🏠</button>${isHost() ? '<button onclick="doAct({type:\'undo\'})">↩ Zurück</button>' : ''}</div>
-   <h1>SMASH <b>TURNIER</b></h1><small>${esc(V.t.name)} · <b>${esc(code)}</b> · ${roleName()} · <span class="conn" style="color:${conn ? 'var(--ok)' : '#ff6b86'}">● ${conn ? 'live' : 'offline'}</span></small></div>`;
+   <h1>SMASH <b>TURNIER</b></h1><small>${esc(V.t.name)} · <b>${esc(code)}</b> · ${roleName()} · <span class="conn" style="color:${conn ? 'var(--ok)' : '#ff6b86'}">● ${conn ? (live ? 'live' : 'verbunden') : 'offline'}${live && ONLINE ? ' · ' + ONLINE + ' online' : ''}</span></small></div>`;
 }
 function renderTabs() {
   if (!code || !V) { $('tabs').style.display = 'none'; return; }
@@ -363,5 +391,6 @@ function render(connOnly) {
 }
 
 /* Beim Start: Hash-Login (Host-Link) auswerten und loslegen */
+initSocket();
 loadInfo();
 route();

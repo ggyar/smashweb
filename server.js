@@ -1,12 +1,14 @@
-// Smash Turnier – läuft auf dem Host-Gerät (Laptop/PC) im eigenen WLAN. Start: node server.js
-// Keine Datenbank, keine externen Pakete: Räume liegen im Speicher und in data/rooms.json.
+// Smash Turnier – läuft auf dem Host-Gerät (Laptop/PC) im eigenen WLAN – oder auf Render wie der RAJ-Server.
+// Start: node server.js   |   Keine Datenbank: Räume liegen im Speicher und in data/rooms.json.
+// Live-Verbindung per socket.io (lib/realtime.js), Fallback: HTTP-Abfragen.
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
 const { spawn } = require('child_process');
 const store = require('./lib/store');
-const { handle, isLocalAddress, lanBases } = require('./lib/api');
+const { handle, isLocalAddress, lanBases, roomCodeOf } = require('./lib/api');
+const realtime = require('./lib/realtime');
 
 const PORT = Number(process.env.PORT) || 3000;
 const PUB = path.join(__dirname, 'public');
@@ -41,6 +43,7 @@ function serveFile(req, res, file) {
   res.writeHead(200, h); res.end(e.raw);
 }
 
+let rt = null; // Live-Verbindung (wird unten angehängt)
 const server = http.createServer(async (req, res) => {
   try {
     const u = new URL(req.url || '/', 'http://localhost');
@@ -53,8 +56,13 @@ const server = http.createServer(async (req, res) => {
         ip: req.socket.remoteAddress || '', local: isLocalAddress(req.socket.remoteAddress),
       });
       res.writeHead(out.status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
-      return res.end(JSON.stringify(out.json));
+      res.end(JSON.stringify(out.json));
+      if (rt && out.status < 400 && rt.mutating(req.method, p)) { const c = roomCodeOf(p); if (c) rt.notify(c); } // alle Live-Clients im Raum informieren
+      return;
     }
+
+    // ohne socket.io-Paket liefert der Server eine leere Datei, damit der Browser keinen Fehler zeigt
+    if (p === '/socket.io/socket.io.js') { res.writeHead(200, { 'Content-Type': 'text/javascript' }); return res.end(''); }
 
     if (p === '/' || /^\/t\/[A-Za-z0-9]+\/?$/.test(p)) return serveFile(req, res, path.join(PUB, 'index.html'));
 
@@ -83,6 +91,9 @@ server.on('error', (e) => {
   process.exit(1);
 });
 
+rt = realtime.attach(server);
+if (!rt) console.log('Hinweis: socket.io ist nicht installiert (npm install) – die App nutzt dann einfache HTTP-Abfragen.');
+
 server.listen(PORT, '0.0.0.0', () => {
   const n = store.load();
   const bases = lanBases();
@@ -90,6 +101,7 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log('\n  Am HOST-GERÄT (hier) öffnen:   http://localhost:' + PORT);
   if (bases.length) console.log('  Freunde im selben WLAN:         ' + bases.join('   ') + '   (per QR-Code in der Lobby)');
   else console.log('  ⚠️  Kein Netzwerk gefunden – verbinde dieses Gerät mit dem WLAN, damit Freunde beitreten können.');
+  console.log('\n  Live-Verbindung: ' + (rt ? 'socket.io aktiv' : 'aus (HTTP-Abfragen)'));
   console.log('\n  Beenden mit Strg+C.\n');
   if (process.env.NO_OPEN !== '1' && !process.argv.includes('--no-open')) openBrowser('http://localhost:' + PORT);
 });
